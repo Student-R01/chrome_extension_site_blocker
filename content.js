@@ -513,30 +513,39 @@ function initGeminiPromptLogger() {
 
   const { logPrompt } = createPromptLogger('Google Gemini', 'https://gemini.google.com/app');
 
-  function readGeminiPrompt() {
-    // Gemini uses a rich-text contenteditable div
-    const inputEl = document.querySelector(
-      'div.ql-editor[contenteditable="true"], ' +
-      'rich-textarea div[contenteditable="true"], ' +
-      'div[contenteditable="true"][aria-label]'
+  // Gemini's input is inside <rich-textarea> as a contenteditable div
+  function getGeminiInput() {
+    return (
+      document.querySelector('rich-textarea .ql-editor') ||
+      document.querySelector('rich-textarea [contenteditable="true"]') ||
+      document.querySelector('.ql-editor[contenteditable="true"]') ||
+      document.querySelector('[data-placeholder][contenteditable="true"]')
     );
-    return inputEl?.innerText?.trim() || '';
   }
 
-  function writeGeminiPrompt(prompt) {
-    const inputEl = document.querySelector(
-      'div.ql-editor[contenteditable="true"], ' +
-      'rich-textarea div[contenteditable="true"], ' +
-      'div[contenteditable="true"][aria-label]'
-    );
-    if (!inputEl) return;
-    inputEl.innerText = prompt;
-    inputEl.dispatchEvent(new InputEvent('input', { bubbles: true }));
+  function readGeminiPrompt() {
+    return getGeminiInput()?.innerText?.trim() || '';
+  }
+
+  function writeGeminiPrompt(text) {
+    const inputEl = getGeminiInput();
+    if (!inputEl) {
+      console.warn('[site-blocker] Gemini input element not found');
+      return;
+    }
+    // Clear and set new content
+    inputEl.focus();
+    inputEl.innerText = text;
+    // Dispatch input event so Gemini's React/Angular picks up the change
+    inputEl.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
   }
 
   function prepareAndLog() {
     const userPrompt = readGeminiPrompt();
-    if (!userPrompt) return;
+    if (!userPrompt) {
+      console.log('[site-blocker] Gemini prompt empty, skipping');
+      return;
+    }
     if (!userPrompt.startsWith(SPOKEN_GRAMMAR_PREFIX)) {
       writeGeminiPrompt(buildGrammarPrompt(userPrompt));
       console.log('[site-blocker] Gemini grammar prefix injected');
@@ -544,24 +553,26 @@ function initGeminiPromptLogger() {
     logPrompt(userPrompt);
   }
 
-  // Submit button click (Gemini uses a mat-icon-button or button with send icon)
+  // Submit button — Gemini uses a button inside .send-button-container or aria-label="Send message"
   document.addEventListener('click', (event) => {
     const btn = event.target.closest(
-      'button.send-button, button[aria-label*="Send"], button[aria-label*="Submit"], mat-icon-button'
+      'button[aria-label="Send message"], ' +
+      'button[data-mat-icon-name="send"], ' +
+      '.send-button, ' +
+      'button.send-button'
     );
     if (!btn) return;
     console.log('[site-blocker] Gemini submit button clicked');
     prepareAndLog();
   }, true);
 
-  // Enter key
+  // Enter key inside Gemini input
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
-    const inputEl = document.querySelector(
-      'div.ql-editor[contenteditable="true"], ' +
-      'rich-textarea div[contenteditable="true"]'
-    );
-    if (!inputEl || !inputEl.contains(event.target)) return;
+    const inputEl = getGeminiInput();
+    if (!inputEl) return;
+    // Check if the event came from inside the Gemini input
+    if (!inputEl.contains(event.target) && event.target !== inputEl) return;
     console.log('[site-blocker] Gemini prompt submitted with Enter key');
     prepareAndLog();
   }, true);
