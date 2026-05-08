@@ -337,10 +337,15 @@
     <div class="info-box">
       <p>Enter one rule per line. Examples:</p>
       <ul>
-        <li><code>w3schools.com</code></li>
-        <li><code>*.example.com</code></li>
-        <li><code>https://domain.com/page/</code></li>
+        <li><code>w3schools.com</code> — allow entire site</li>
+        <li><code>*.example.com</code> — allow all subdomains</li>
+        <li><code>https://www.w3schools.com/python/*</code> — allow only the Python section</li>
+        <li><code>https://www.w3schools.com/python/default.asp</code> — allow one exact page</li>
+        <li><code>https://domain.com/page/</code> — allow a specific path prefix</li>
       </ul>
+      <p style="margin-top:8px;font-size:12px;color:#888;">
+        Use <code>*</code> as a wildcard to match any characters in a URL path or query string.
+      </p>
     </div>
   </div>
 

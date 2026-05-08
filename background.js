@@ -396,6 +396,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true; // keep channel open for async reply
 });
 
+/**
+ * Convert a whitelist pattern into a RegExp for URL matching.
+ *
+ * Supported pattern forms (in priority order):
+ *  1. Subdomain wildcard  *.example.com          — matches example.com and any subdomain
+ *  2. URL path wildcard   https://site.com/path/* — * matches any suffix in the path/query
+ *  3. Exact domain        example.com             — hostname-only match
+ *  4. Plain prefix        https://site.com/page   — URL must start with this string
+ *  5. Hostname contains   partial                 — hostname contains the string (legacy fallback)
+ */
+function patternToRegex(pattern) {
+  // Subdomain wildcard: *.example.com
+  if (pattern.startsWith("*.")) {
+    const base = escapeRegex(pattern.slice(2));
+    // Matches the base domain or any subdomain
+    return new RegExp(`^https?://([^/]+\\.)?${base}(/|$)`, "i");
+  }
+
+  // URL with wildcard(s) in path/query: must contain a protocol and a *
+  if (/^https?:\/\//.test(pattern) && pattern.includes("*")) {
+    // Split on * and escape each segment, then join with .*
+    const regexStr = pattern
+      .split("*")
+      .map(escapeRegex)
+      .join(".*");
+    return new RegExp(`^${regexStr}`, "i");
+  }
+
+  // Exact domain (no slashes, no protocol)
+  if (!pattern.includes("/") && !pattern.includes(":")) {
+    const escaped = escapeRegex(pattern);
+    return new RegExp(`^https?://(([^/]+\\.)?${escaped})(/|$)`, "i");
+  }
+
+  // Plain prefix (full URL starts with pattern)
+  return new RegExp(`^${escapeRegex(pattern)}`, "i");
+}
+
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // Match URL against whitelist patterns
 function isAllowed(url, whitelist) {
   try {
@@ -404,22 +446,15 @@ function isAllowed(url, whitelist) {
       const pattern = rule.trim();
       if (!pattern) continue;
 
-      // Exact domain match
-      if (u.hostname === pattern) return true;
-
-      // Subdomain wildcard (*.example.com)
-      if (pattern.startsWith("*.")) {
-        const base = pattern.slice(2);
-        if (u.hostname === base || u.hostname.endsWith("." + base)) {
-          return true;
-        }
+      try {
+        const regex = patternToRegex(pattern);
+        if (regex.test(url)) return true;
+      } catch (regexErr) {
+        // Fallback: legacy plain-string checks
+        if (u.hostname === pattern) return true;
+        if (url.startsWith(pattern)) return true;
+        if (u.hostname.includes(pattern)) return true;
       }
-
-      // Prefix match (full URL starts with)
-      if (url.startsWith(pattern)) return true;
-
-      // Plain domain contains
-      if (u.hostname.includes(pattern)) return true;
     }
   } catch (e) {
     console.warn("Bad URL:", url);
