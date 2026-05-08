@@ -451,30 +451,45 @@ function initCopilotPromptLogger() {
 
   const { logPrompt } = createPromptLogger('Microsoft Copilot', 'https://copilot.microsoft.com/');
 
+  // Copilot uses a textarea as its input box
+  function getCopilotInput() {
+    return (
+      document.querySelector('textarea[placeholder="Message Copilot"]') ||
+      document.querySelector('textarea#userInput') ||
+      document.querySelector('textarea[data-testid="composer-input"]') ||
+      document.querySelector('div[contenteditable="true"][aria-label*="opilot"]') ||
+      document.querySelector('textarea')
+    );
+  }
+
   function readCopilotPrompt() {
-    // Copilot uses a textarea or contenteditable div
-    const textarea = document.querySelector('textarea[name="q"], textarea#searchbox, div[contenteditable="true"][aria-label]');
-    return textarea?.value?.trim() || textarea?.innerText?.trim() || '';
+    const el = getCopilotInput();
+    return el?.value?.trim() || el?.innerText?.trim() || '';
   }
 
   function writeCopilotPrompt(prompt) {
-    const textarea = document.querySelector('textarea[name="q"], textarea#searchbox');
-    if (textarea) {
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
-      nativeInputValueSetter.call(textarea, prompt);
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    const el = getCopilotInput();
+    if (!el) {
+      console.warn('[site-blocker] Copilot input not found');
       return;
     }
-    const editable = document.querySelector('div[contenteditable="true"][aria-label]');
-    if (editable) {
-      editable.innerText = prompt;
-      editable.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set ||
+                           Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+      if (nativeSetter) nativeSetter.call(el, prompt);
+      else el.value = prompt;
+    } else {
+      el.innerText = prompt;
     }
+    el.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
   function prepareAndLog() {
     const userPrompt = readCopilotPrompt();
-    if (!userPrompt) return;
+    if (!userPrompt) {
+      console.log('[site-blocker] Copilot prompt empty, skipping');
+      return;
+    }
     if (!userPrompt.startsWith(SPOKEN_GRAMMAR_PREFIX)) {
       writeCopilotPrompt(buildGrammarPrompt(userPrompt));
       console.log('[site-blocker] Copilot grammar prefix injected');
@@ -484,20 +499,22 @@ function initCopilotPromptLogger() {
 
   // Submit button click
   document.addEventListener('click', (event) => {
-    const btn = event.target.closest('button[aria-label*="Submit"], button[aria-label*="Send"], button[type="submit"]');
+    const btn = event.target.closest(
+      'button[aria-label="Submit message"], ' +
+      'button[aria-label="Send"], ' +
+      'button[aria-label="Send message"], ' +
+      'button[type="submit"]'
+    );
     if (!btn) return;
     console.log('[site-blocker] Copilot submit button clicked');
     prepareAndLog();
   }, true);
 
-  // Enter key in textarea / contenteditable
+  // Enter key in textarea
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
-    const target = event.target;
-    const isCopilotInput =
-      target.matches('textarea[name="q"], textarea#searchbox') ||
-      target.matches('div[contenteditable="true"][aria-label]');
-    if (!isCopilotInput) return;
+    const input = getCopilotInput();
+    if (!input || event.target !== input) return;
     console.log('[site-blocker] Copilot prompt submitted with Enter key');
     prepareAndLog();
   }, true);
