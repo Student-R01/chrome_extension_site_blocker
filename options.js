@@ -27,23 +27,24 @@ async function loadWhitelistTextarea() {
     "studentInfo"
   ]);
 
-  let lines = whitelist;
+  // Always start with the admin-saved whitelist
+  const set = new Set(whitelist);
+
+  // Merge class wishlist on top (don't replace)
   const hasFetchedWishlist = classWishlistCache &&
     classWishlistCache.classCode === studentInfo.classCode &&
     Array.isArray(classWishlistCache.wishlist) &&
     classWishlistCache.wishlist.length > 0;
 
   if (hasFetchedWishlist) {
-    lines = classWishlistCache.wishlist;
+    classWishlistCache.wishlist.forEach(r => set.add(r));
   }
 
   if (self.CONFIG && Array.isArray(self.CONFIG.REQUIRED_RULES)) {
-    const set = new Set(lines);
     self.CONFIG.REQUIRED_RULES.forEach(r => set.add(r));
-    lines = Array.from(set);
   }
 
-  $("whitelist").value = lines.join("\n");
+  $("whitelist").value = Array.from(set).join("\n");
 }
 
 async function loadPcCodeInput() {
