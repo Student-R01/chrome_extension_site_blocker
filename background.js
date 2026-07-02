@@ -363,6 +363,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ success: false, message: 'No class code set' });
       }
     } else if (message && message.type === "logChatGptPrompt") {
+      // Legacy handler — kept for backward compatibility, delegates to logAiPrompt logic
       const prompt = String(message.prompt || '').trim();
       if (!prompt) {
         console.log('[site-blocker] logChatGptPrompt skipped: empty prompt');
@@ -388,6 +389,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
 
       console.log('[site-blocker] logChatGptPrompt Firestore write requested');
+      sendResponse({ success: true });
+    } else if (message && message.type === "logAiPrompt") {
+      // Unified handler for ChatGPT, Microsoft Copilot, Google Gemini
+      const prompt = String(message.prompt || '').trim();
+      const siteName = String(message.siteName || 'AI Tool').trim();
+      const siteUrl = String(message.siteUrl || '').trim();
+
+      if (!prompt) {
+        console.log(`[site-blocker] logAiPrompt skipped: empty prompt (${siteName})`);
+        sendResponse({ success: false, message: 'No prompt provided' });
+        return;
+      }
+
+      console.log(`[site-blocker] logAiPrompt received from ${siteName}`, { prompt });
+      const deviceId = await getOrCreateDeviceId();
+      const { pcCode = '' } = await chrome.storage.local.get('pcCode');
+      const { studentInfo = {} } = await chrome.storage.local.get('studentInfo');
+
+      await writeLogToFirestore({
+        url: siteUrl,
+        title: `${siteName} Prompt`,
+        allowed: true,
+        classCode: studentInfo.classCode || '',
+        rollNumber: studentInfo.rollNumber || '',
+        pcCode,
+        deviceId,
+        prompt,
+        ts: Date.now()
+      });
+
+      console.log(`[site-blocker] logAiPrompt Firestore write requested for ${siteName}`);
       sendResponse({ success: true });
     } else {
       sendResponse(undefined);

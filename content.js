@@ -6,12 +6,16 @@ if (!document.body) {
       observer.disconnect();
       initFab();
       initChatGptPromptLogger();
+      initCopilotPromptLogger();
+      initGeminiPromptLogger();
     }
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
 } else {
   initFab();
   initChatGptPromptLogger();
+  initCopilotPromptLogger();
+  initGeminiPromptLogger();
 }
 
 function initFab() {
@@ -321,26 +325,71 @@ function initFab() {
   });
 }
 
+// ============================================================
+// Shared grammar prefix injected into all AI prompts
+// ============================================================
+const SPOKEN_GRAMMAR_PREFIX = [
+  'First answer the user\'s actual question clearly and helpfully.',
+  'Then check the user text only for spoken English grammar.',
+  'Ignore capitalization, punctuation, and formatting issues.',
+  'Treat it as spoken English practice.',
+  'Reply in this order:',
+  '1. Direct answer to the user\'s question.',
+  '2. Corrected spoken-English version of the user text.',
+  '3. Short explanation of the spoken grammar mistakes.',
+  '',
+  'User text:'
+].join('\n');
+
+function buildGrammarPrompt(userPrompt) {
+  return `${SPOKEN_GRAMMAR_PREFIX}\n${userPrompt}`;
+}
+
+// ============================================================
+// Generic prompt logger — shared by ChatGPT, Copilot, Gemini
+// ============================================================
+function createPromptLogger(siteName, siteUrl) {
+  let lastLoggedPrompt = '';
+  let lastLoggedAt = 0;
+
+  async function logPrompt(prompt) {
+    if (!prompt) {
+      console.log(`[site-blocker] ${siteName} prompt logging skipped: empty prompt`);
+      return;
+    }
+    const now = Date.now();
+    if (prompt === lastLoggedPrompt && now - lastLoggedAt < 3000) {
+      console.log(`[site-blocker] ${siteName} prompt logging skipped: duplicate`, { prompt });
+      return;
+    }
+    lastLoggedPrompt = prompt;
+    lastLoggedAt = now;
+    try {
+      console.log(`[site-blocker] ${siteName} prompt detected`, { prompt });
+      const response = await chrome.runtime.sendMessage({
+        type: 'logAiPrompt',
+        prompt,
+        siteName,
+        siteUrl,
+      });
+      console.log(`[site-blocker] ${siteName} prompt logged`, response);
+    } catch (error) {
+      console.warn(`[site-blocker] failed to log ${siteName} prompt`, error);
+    }
+  }
+
+  return { logPrompt };
+}
+
+// ============================================================
+// ChatGPT — https://chatgpt.com
+// ============================================================
 function initChatGptPromptLogger() {
   if (window.location.origin !== 'https://chatgpt.com') return;
   if (window.__labPolicyChatGptLoggerInitialized) return;
   window.__labPolicyChatGptLoggerInitialized = true;
 
-  const SPOKEN_GRAMMAR_PREFIX = [
-    'First answer the user\'s actual question clearly and helpfully.',
-    'Then check the user text only for spoken English grammar.',
-    'Ignore capitalization, punctuation, and formatting issues.',
-    'Treat it as spoken English practice.',
-    'Reply in this order:',
-    '1. Direct answer to the user\'s question.',
-    '2. Corrected spoken-English version of the user text.',
-    '3. Short explanation of the spoken grammar mistakes.',
-    '',
-    'User text:'
-  ].join('\n');
-
-  let lastLoggedPrompt = '';
-  let lastLoggedAt = 0;
+  const { logPrompt } = createPromptLogger('ChatGPT', 'https://chatgpt.com/');
 
   function readComposerPrompt() {
     return document.getElementById('prompt-textarea')?.innerText?.trim() || '';
@@ -349,7 +398,6 @@ function initChatGptPromptLogger() {
   function writeComposerPrompt(prompt) {
     const promptEl = document.getElementById('prompt-textarea');
     if (!promptEl) return;
-
     promptEl.innerHTML = '';
     const paragraph = document.createElement('p');
     paragraph.textContent = prompt;
@@ -361,56 +409,20 @@ function initChatGptPromptLogger() {
     }));
   }
 
-  function buildGrammarPrompt(userPrompt) {
-    return `${SPOKEN_GRAMMAR_PREFIX}\n${userPrompt}`;
-  }
-
   function preparePromptForGrammarCheck() {
     const userPrompt = readComposerPrompt();
     if (!userPrompt) {
       console.log('[site-blocker] ChatGPT prompt injection skipped: empty prompt');
       return '';
     }
-
     if (userPrompt.startsWith(SPOKEN_GRAMMAR_PREFIX)) {
       console.log('[site-blocker] ChatGPT prompt already contains spoken grammar prefix');
       return userPrompt.slice(SPOKEN_GRAMMAR_PREFIX.length).trim();
     }
-
     const injectedPrompt = buildGrammarPrompt(userPrompt);
     writeComposerPrompt(injectedPrompt);
-    console.log('[site-blocker] ChatGPT prompt injection applied', {
-      originalPrompt: userPrompt,
-      injectedPrompt,
-    });
+    console.log('[site-blocker] ChatGPT prompt injection applied', { originalPrompt: userPrompt });
     return userPrompt;
-  }
-
-  async function logPrompt(prompt) {
-    if (!prompt) {
-      console.log('[site-blocker] ChatGPT prompt logging skipped: empty prompt');
-      return;
-    }
-
-    const now = Date.now();
-    if (prompt === lastLoggedPrompt && now - lastLoggedAt < 3000) {
-      console.log('[site-blocker] ChatGPT prompt logging skipped: duplicate submit', { prompt });
-      return;
-    }
-
-    lastLoggedPrompt = prompt;
-    lastLoggedAt = now;
-
-    try {
-      console.log('[site-blocker] ChatGPT prompt detected', { prompt });
-      const response = await chrome.runtime.sendMessage({
-        type: 'logChatGptPrompt',
-        prompt,
-      });
-      console.log('[site-blocker] ChatGPT prompt logged', response);
-    } catch (error) {
-      console.warn('[site-blocker] failed to log ChatGPT prompt', error);
-    }
   }
 
   document.addEventListener('click', (event) => {
@@ -426,5 +438,159 @@ function initChatGptPromptLogger() {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
     console.log('[site-blocker] ChatGPT prompt submitted with Enter key');
     logPrompt(preparePromptForGrammarCheck());
+  }, true);
+}
+
+// ============================================================
+// Microsoft Copilot — https://copilot.microsoft.com
+// ============================================================
+function initCopilotPromptLogger() {
+  if (!window.location.origin.includes('copilot.microsoft.com')) return;
+  if (window.__labPolicyCopilotLoggerInitialized) return;
+  window.__labPolicyCopilotLoggerInitialized = true;
+
+  const { logPrompt } = createPromptLogger('Microsoft Copilot', 'https://copilot.microsoft.com/');
+
+  // Copilot uses a textarea as its input box
+  function getCopilotInput() {
+    return (
+      document.querySelector('textarea[placeholder="Message Copilot"]') ||
+      document.querySelector('textarea#userInput') ||
+      document.querySelector('textarea[data-testid="composer-input"]') ||
+      document.querySelector('div[contenteditable="true"][aria-label*="opilot"]') ||
+      document.querySelector('textarea')
+    );
+  }
+
+  function readCopilotPrompt() {
+    const el = getCopilotInput();
+    return el?.value?.trim() || el?.innerText?.trim() || '';
+  }
+
+  function writeCopilotPrompt(prompt) {
+    const el = getCopilotInput();
+    if (!el) {
+      console.warn('[site-blocker] Copilot input not found');
+      return;
+    }
+    if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set ||
+                           Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+      if (nativeSetter) nativeSetter.call(el, prompt);
+      else el.value = prompt;
+    } else {
+      el.innerText = prompt;
+    }
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  function prepareAndLog() {
+    const userPrompt = readCopilotPrompt();
+    if (!userPrompt) {
+      console.log('[site-blocker] Copilot prompt empty, skipping');
+      return;
+    }
+    if (!userPrompt.startsWith(SPOKEN_GRAMMAR_PREFIX)) {
+      writeCopilotPrompt(buildGrammarPrompt(userPrompt));
+      console.log('[site-blocker] Copilot grammar prefix injected');
+    }
+    logPrompt(userPrompt);
+  }
+
+  // Submit button click
+  document.addEventListener('click', (event) => {
+    const btn = event.target.closest(
+      'button[aria-label="Submit message"], ' +
+      'button[aria-label="Send"], ' +
+      'button[aria-label="Send message"], ' +
+      'button[type="submit"]'
+    );
+    if (!btn) return;
+    console.log('[site-blocker] Copilot submit button clicked');
+    prepareAndLog();
+  }, true);
+
+  // Enter key in textarea
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    const input = getCopilotInput();
+    if (!input || event.target !== input) return;
+    console.log('[site-blocker] Copilot prompt submitted with Enter key');
+    prepareAndLog();
+  }, true);
+}
+
+// ============================================================
+// Google Gemini — https://gemini.google.com
+// ============================================================
+function initGeminiPromptLogger() {
+  if (!window.location.origin.includes('gemini.google.com')) return;
+  if (window.__labPolicyGeminiLoggerInitialized) return;
+  window.__labPolicyGeminiLoggerInitialized = true;
+
+  const { logPrompt } = createPromptLogger('Google Gemini', 'https://gemini.google.com/app');
+
+  // Gemini's input is inside <rich-textarea> as a contenteditable div
+  function getGeminiInput() {
+    return (
+      document.querySelector('rich-textarea .ql-editor') ||
+      document.querySelector('rich-textarea [contenteditable="true"]') ||
+      document.querySelector('.ql-editor[contenteditable="true"]') ||
+      document.querySelector('[data-placeholder][contenteditable="true"]')
+    );
+  }
+
+  function readGeminiPrompt() {
+    return getGeminiInput()?.innerText?.trim() || '';
+  }
+
+  function writeGeminiPrompt(text) {
+    const inputEl = getGeminiInput();
+    if (!inputEl) {
+      console.warn('[site-blocker] Gemini input element not found');
+      return;
+    }
+    // Clear and set new content
+    inputEl.focus();
+    inputEl.innerText = text;
+    // Dispatch input event so Gemini's React/Angular picks up the change
+    inputEl.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
+  }
+
+  function prepareAndLog() {
+    const userPrompt = readGeminiPrompt();
+    if (!userPrompt) {
+      console.log('[site-blocker] Gemini prompt empty, skipping');
+      return;
+    }
+    if (!userPrompt.startsWith(SPOKEN_GRAMMAR_PREFIX)) {
+      writeGeminiPrompt(buildGrammarPrompt(userPrompt));
+      console.log('[site-blocker] Gemini grammar prefix injected');
+    }
+    logPrompt(userPrompt);
+  }
+
+  // Submit button — Gemini uses a button inside .send-button-container or aria-label="Send message"
+  document.addEventListener('click', (event) => {
+    const btn = event.target.closest(
+      'button[aria-label="Send message"], ' +
+      'button[data-mat-icon-name="send"], ' +
+      '.send-button, ' +
+      'button.send-button'
+    );
+    if (!btn) return;
+    console.log('[site-blocker] Gemini submit button clicked');
+    prepareAndLog();
+  }, true);
+
+  // Enter key inside Gemini input
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    const inputEl = getGeminiInput();
+    if (!inputEl) return;
+    // Check if the event came from inside the Gemini input
+    if (!inputEl.contains(event.target) && event.target !== inputEl) return;
+    console.log('[site-blocker] Gemini prompt submitted with Enter key');
+    prepareAndLog();
   }, true);
 }
